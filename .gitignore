@@ -1,0 +1,5 @@
+.env
+.linkedin-browser-data/*
+.linkedin-cookies.json
+node_modules
+.DS_Store

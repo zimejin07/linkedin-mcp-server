@@ -1,0 +1,23 @@
+{
+  "name": "linkedin-mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for LinkedIn automation with Claude Desktop",
+  "main": "index.js",
+  "bin": {
+    "linkedin-mcp-server": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "dotenv": "^17.2.3",
+    "puppeteer": "^22.0.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
