@@ -28,7 +28,7 @@ puppeteer.use(StealthPlugin());
 const CONFIG = {
   userDataDir: path.join(__dirname, ".linkedin-browser-data"),
   cookiesPath: path.join(__dirname, ".linkedin-cookies.json"),
-  headless: true, // Set to true after first login verification
+  headless: false, // Set to true after first login verification
   slowMo: 100, // Slow down operations to appear more human
 };
 
@@ -366,72 +366,119 @@ class LinkedInAutomation {
 
   async getJobDetails(jobUrl) {
     try {
+      console.error("Fetching job details from:", jobUrl);
+
       await this.page.goto(jobUrl, {
-        waitUntil: "networkidle2",
+        waitUntil: "domcontentloaded",
         timeout: 30000,
       });
 
-      await this.randomDelay(1500, 2500);
+      await this.randomDelay(2000, 3000);
 
-      // Wait for job details to load
-      await this.page.waitForSelector(".jobs-details__main-content", {
-        timeout: 10000,
+      // Wait for job view layout (this is present in direct job URLs)
+      await Promise.race([
+        this.page.waitForSelector(".job-view-layout", { timeout: 10000 }),
+        this.page.waitForSelector(".jobs-details", { timeout: 10000 }),
+        this.page.waitForSelector(
+          ".job-details-jobs-unified-top-card__job-title",
+          { timeout: 10000 }
+        ),
+      ]).catch(() => {
+        console.error("Waiting for selectors, continuing anyway...");
       });
+
+      await this.randomDelay(1000, 2000);
 
       const details = await this.page.evaluate(() => {
         const getTextContent = (selector) => {
           const el = document.querySelector(selector);
-          return el ? el.textContent.trim() : "N/A";
+          return el ? el.textContent.trim() : null;
         };
 
-        // Title from the h1 inside job-details-jobs-unified-top-card__job-title
-        const titleEl = document.querySelector(
-          ".job-details-jobs-unified-top-card__job-title h1 a"
-        );
-        const title = titleEl ? titleEl.textContent.trim() : "N/A";
+        // Title - Direct job URLs have simpler structure
+        let title =
+          getTextContent(".job-details-jobs-unified-top-card__job-title h1") ||
+          getTextContent(
+            ".job-details-jobs-unified-top-card__sticky-header-job-title strong"
+          ) ||
+          "N/A";
 
-        // Company name
-        const companyEl = document.querySelector(
-          ".job-details-jobs-unified-top-card__company-name a"
-        );
-        const company = companyEl ? companyEl.textContent.trim() : "N/A";
+        // Company
+        let company =
+          getTextContent(
+            ".job-details-jobs-unified-top-card__company-name a"
+          ) ||
+          getTextContent(".job-details-jobs-unified-top-card__company-name") ||
+          "N/A";
 
-        // Location and other metadata from the tertiary description
+        // Location and metadata
         const metadataEl = document.querySelector(
           ".job-details-jobs-unified-top-card__tertiary-description-container"
         );
-        const metadata = metadataEl ? metadataEl.textContent.trim() : "N/A";
+        let metadata = "N/A";
+        let location = "N/A";
 
-        // Extract location (usually first part before "·")
-        const locationMatch = metadata.match(/^([^·]+)/);
-        const location = locationMatch ? locationMatch[1].trim() : "N/A";
+        if (metadataEl) {
+          metadata = metadataEl.textContent.trim();
+          // Extract location (first part before "·")
+          const locationMatch = metadata.match(/^([^·]+)/);
+          location = locationMatch
+            ? locationMatch[1].trim()
+            : metadata.split("·")[0].trim();
+        }
 
-        // Job preferences (Remote, Full-time, etc.)
+        // Workplace preferences (Remote, Full-time, etc.)
         const preferences = [];
         const preferenceButtons = document.querySelectorAll(
           ".job-details-fit-level-preferences button"
         );
         preferenceButtons.forEach((btn) => {
           const text = btn.textContent.trim().replace(/\s+/g, " ");
-          if (text) preferences.push(text);
+          // Extract just the preference type (Remote, Full-time, etc.)
+          const match = text.match(
+            /(Remote|Full-time|Part-time|Contract|Hybrid|On-site)/i
+          );
+          if (match) preferences.push(match[1]);
         });
 
-        // Job description
+        // Job description from the "About the job" section
+        let description = "N/A";
         const descriptionEl = document.querySelector(
           ".jobs-description__content .jobs-box__html-content"
         );
-        const description = descriptionEl
-          ? descriptionEl.textContent.trim()
+        if (descriptionEl) {
+          description = descriptionEl.textContent.trim();
+        }
+
+        // Hiring team info
+        let hiringManager = "N/A";
+        const hiringManagerName = document.querySelector(".jobs-poster__name");
+        const hiringManagerTitle = document.querySelector(
+          ".linked-area .text-body-small"
+        );
+        if (hiringManagerName) {
+          hiringManager = hiringManagerName.textContent.trim();
+          if (hiringManagerTitle) {
+            hiringManager += " - " + hiringManagerTitle.textContent.trim();
+          }
+        }
+
+        // Company info from "About the company" section
+        const companyFollowers =
+          getTextContent(".jobs-company .artdeco-entity-lockup__subtitle") ||
+          "N/A";
+        const companyIndustry = getTextContent(".jobs-company .t-14.mt5");
+        const companySize = companyIndustry
+          ? companyIndustry.split("·")[0].trim()
           : "N/A";
 
-        // Company info
-        const companySize = getTextContent(".jobs-company .t-14.mt5");
-        const companyFollowers = getTextContent(
-          ".artdeco-entity-lockup__subtitle.t-16"
-        );
-        const companyDescription = getTextContent(
+        let companyDescription = "N/A";
+        const companyDescEl = document.querySelector(
           ".jobs-company__company-description"
         );
+        if (companyDescEl) {
+          companyDescription = companyDescEl.textContent.trim();
+        }
 
         return {
           title,
@@ -439,17 +486,25 @@ class LinkedInAutomation {
           location,
           metadata,
           workplaceType: preferences.join(", ") || "N/A",
-          description,
+          description:
+            description.substring(0, 3000) +
+            (description.length > 3000 ? "..." : ""),
+          hiringManager,
           companyInfo: {
             size: companySize,
             followers: companyFollowers,
-            description: companyDescription,
+            industry: companyIndustry || "N/A",
+            description:
+              companyDescription.substring(0, 800) +
+              (companyDescription.length > 800 ? "..." : ""),
           },
         };
       });
 
+      console.error("Successfully extracted job details");
       return { success: true, details };
     } catch (error) {
+      console.error("Error in getJobDetails:", error);
       return {
         success: false,
         message: `Error getting job details: ${error.message}`,
