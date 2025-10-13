@@ -19,10 +19,10 @@ A server to automate LinkedIn job searches with anti-detection features and pers
 
 ```bash
 # 1. Create project directory
-mkdir linkedin-mcp-server
+git clone the repo
 cd linkedin-mcp-server
 
-# 2. Save the code as index.js and package.json
+# 2. cd linkedin-mcp-server
 
 # 3. Install dependencies
 npm install
@@ -31,8 +31,7 @@ npm install
 chmod +x index.js
 
 # 5. Set environment variables (secure way)
-export LINKEDIN_EMAIL="your-email@example.com"
-export LINKEDIN_PASSWORD="your-password"
+See below
 ```
 
 ## Claude Desktop Configuration
