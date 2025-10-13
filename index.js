@@ -114,53 +114,83 @@ class LinkedInAutomation {
     try {
       await this.initialize();
 
-      // Check if already logged in
-      await this.page.goto("https://www.linkedin.com/feed/", {
-        waitUntil: "networkidle2",
-        timeout: 30000,
-      });
+      console.error("Checking if already logged in...");
 
-      // If we're on the feed page, we're already logged in
-      if (this.page.url().includes("/feed/")) {
-        this.isLoggedIn = true;
-        return {
-          success: true,
-          message: "Already logged in (session restored)",
-        };
+      // Check if already logged in by trying to access feed
+      try {
+        await this.page.goto("https://www.linkedin.com/feed/", {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+
+        await this.randomDelay(2000, 3000);
+
+        // If we're on the feed page, we're already logged in
+        if (this.page.url().includes("/feed/")) {
+          this.isLoggedIn = true;
+          console.error("Already logged in via saved session");
+          return {
+            success: true,
+            message: "Already logged in (session restored)",
+          };
+        }
+      } catch (e) {
+        console.error("Not logged in, proceeding to login page...");
       }
 
       // Navigate to login page
+      console.error("Going to login page...");
       await this.page.goto("https://www.linkedin.com/login", {
-        waitUntil: "networkidle2",
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
       });
 
-      await this.randomDelay(500, 1500);
+      await this.randomDelay(1000, 2000);
+
+      // Wait for login form
+      console.error("Waiting for login form...");
+      await this.page.waitForSelector("#username", { timeout: 10000 });
 
       // Type email with human-like delays
-      await this.page.waitForSelector("#username", { timeout: 10000 });
+      console.error("Typing email...");
       await this.page.type("#username", email, { delay: 120 });
       await this.randomDelay(300, 800);
 
       // Type password
+      console.error("Typing password...");
       await this.page.type("#password", password, { delay: 130 });
       await this.randomDelay(500, 1000);
 
       // Click login button
-      await this.page.click('button[type="submit"]');
+      console.error("Clicking login button...");
+      const submitButton = await this.page.$('button[type="submit"]');
+      if (submitButton) {
+        await submitButton.click();
+      } else {
+        throw new Error("Login button not found");
+      }
 
-      // Wait for navigation
-      await this.page
-        .waitForNavigation({
-          waitUntil: "networkidle2",
-          timeout: 30000,
-        })
-        .catch(() => {});
+      // Wait for page to change with more lenient settings
+      console.error("Waiting for redirect after login...");
+      await Promise.race([
+        this.page.waitForNavigation({
+          waitUntil: "domcontentloaded",
+          timeout: 45000,
+        }),
+        this.page.waitForSelector(".feed-identity-module", { timeout: 45000 }),
+        this.page.waitForSelector(".checkpoint", { timeout: 45000 }),
+        new Promise((resolve) => setTimeout(resolve, 5000)),
+      ]).catch(() => {
+        console.error("Navigation wait completed/timeout");
+      });
 
       await this.randomDelay(2000, 3000);
 
-      // Check for verification/checkpoint
+      // Check current URL
       const currentUrl = this.page.url();
+      console.error("Current URL after login:", currentUrl);
 
+      // Check for verification/checkpoint
       if (
         currentUrl.includes("checkpoint") ||
         currentUrl.includes("challenge")
@@ -168,20 +198,27 @@ class LinkedInAutomation {
         return {
           success: false,
           message:
-            "Security checkpoint detected. LinkedIn requires manual verification. Please log in manually once, then the session will be saved.",
+            "Security checkpoint detected. Please complete the verification in the browser window. The session will be saved once you're logged in.",
           needsManualVerification: true,
         };
       }
 
       // Verify login success
-      if (currentUrl.includes("/feed/") || currentUrl.includes("/mynetwork/")) {
+      if (
+        currentUrl.includes("/feed/") ||
+        currentUrl.includes("/mynetwork/") ||
+        currentUrl.includes("/home")
+      ) {
         this.isLoggedIn = true;
         await this.saveCookies();
+        console.error("Login successful!");
         return { success: true, message: "Login successful" };
       }
 
       // Check for error messages
-      const errorElement = await this.page.$("#error-for-password");
+      const errorElement = await this.page.$(
+        "#error-for-password, .alert-content"
+      );
       if (errorElement) {
         const errorText = await this.page.evaluate(
           (el) => el.textContent,
@@ -190,8 +227,23 @@ class LinkedInAutomation {
         return { success: false, message: `Login failed: ${errorText}` };
       }
 
-      return { success: false, message: "Login failed: Unknown error" };
+      // If we're still on login page, something went wrong
+      if (currentUrl.includes("/login")) {
+        return {
+          success: false,
+          message:
+            "Still on login page. Please check credentials or complete verification manually if browser is visible.",
+        };
+      }
+
+      return {
+        success: true,
+        message:
+          "Login process completed. Please verify in the browser window.",
+        currentUrl,
+      };
     } catch (error) {
+      console.error("Login error:", error);
       return { success: false, message: `Login error: ${error.message}` };
     }
   }
