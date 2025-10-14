@@ -28,7 +28,7 @@ puppeteer.use(StealthPlugin());
 const CONFIG = {
   userDataDir: path.join(__dirname, ".linkedin-browser-data"),
   cookiesPath: path.join(__dirname, ".linkedin-cookies.json"),
-  headless: false, // Set to true after first login verification
+  headless: true, // Set to true after first login verification
   slowMo: 100, // Slow down operations to appear more human
 };
 
