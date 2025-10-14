@@ -443,11 +443,27 @@ class LinkedInAutomation {
 
         // Job description from the "About the job" section
         let description = "N/A";
-        const descriptionEl = document.querySelector(
+        const descriptionContainer = document.querySelector(
           ".jobs-description__content .jobs-box__html-content"
         );
-        if (descriptionEl) {
-          description = descriptionEl.textContent.trim();
+        if (descriptionContainer) {
+          // Get the content after the "About the job" heading
+          // The actual description is in .mt4 > p[dir="ltr"]
+          const contentDiv = descriptionContainer.querySelector(".mt4");
+          if (contentDiv) {
+            // Get the paragraph with dir="ltr" which contains all the description
+            const descParagraph = contentDiv.querySelector('p[dir="ltr"]');
+            if (descParagraph) {
+              description = descParagraph.textContent.trim();
+            } else {
+              description = contentDiv.textContent.trim();
+            }
+          } else {
+            // Fallback: get all text content
+            description = descriptionContainer.textContent.trim();
+            // Remove "About the job" heading if present
+            description = description.replace(/^About the job\s*/i, "");
+          }
         }
 
         // Hiring team info
@@ -464,20 +480,40 @@ class LinkedInAutomation {
         }
 
         // Company info from "About the company" section
-        const companyFollowers =
-          getTextContent(".jobs-company .artdeco-entity-lockup__subtitle") ||
-          "N/A";
-        const companyIndustry = getTextContent(".jobs-company .t-14.mt5");
-        const companySize = companyIndustry
-          ? companyIndustry.split("·")[0].trim()
+        const companyFollowersEl = document.querySelector(
+          ".jobs-company .artdeco-entity-lockup__subtitle"
+        );
+        const companyFollowers = companyFollowersEl
+          ? companyFollowersEl.textContent.trim()
           : "N/A";
+
+        const companyIndustryEl = document.querySelector(
+          ".jobs-company .t-14.mt5"
+        );
+        const companyIndustry = companyIndustryEl
+          ? companyIndustryEl.textContent.trim()
+          : "N/A";
+
+        // Extract company size from industry line (format: "Industry · 51-200 employees · X on LinkedIn")
+        let companySize = "N/A";
+        if (companyIndustry !== "N/A") {
+          const sizeMatch = companyIndustry.match(/(\d+-?\d*\s+employees)/i);
+          if (sizeMatch) {
+            companySize = sizeMatch[1];
+          }
+        }
 
         let companyDescription = "N/A";
         const companyDescEl = document.querySelector(
-          ".jobs-company__company-description"
+          ".jobs-company__company-description .inline-show-more-text"
         );
         if (companyDescEl) {
           companyDescription = companyDescEl.textContent.trim();
+          // Remove "show more" button text if present
+          companyDescription = companyDescription.replace(
+            /…\s*show more\s*$/i,
+            ""
+          );
         }
 
         return {
