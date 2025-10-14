@@ -387,13 +387,43 @@ class LinkedInAutomation {
         console.error("Waiting for selectors, continuing anyway...");
       });
 
-      await this.randomDelay(1000, 2000);
+      // Wait specifically for job description to load
+      await this.page
+        .waitForSelector(".jobs-description__content", {
+          timeout: 10000,
+        })
+        .catch(() => {
+          console.error("Job description container not found, continuing...");
+        });
+
+      await this.randomDelay(2000, 3000);
 
       const details = await this.page.evaluate(() => {
         const getTextContent = (selector) => {
           const el = document.querySelector(selector);
           return el ? el.textContent.trim() : null;
         };
+
+        // Debug: Log what we're finding
+        console.log("=== DEBUG INFO ===");
+        console.log(
+          "Description container exists:",
+          !!document.querySelector(".jobs-description__content")
+        );
+        console.log(
+          "jobs-box__html-content exists:",
+          !!document.querySelector(".jobs-box__html-content")
+        );
+        console.log("mt4 div exists:", !!document.querySelector(".mt4"));
+
+        const mt4 = document.querySelector(".jobs-description__content .mt4");
+        if (mt4) {
+          console.log("mt4 innerHTML length:", mt4.innerHTML.length);
+          console.log(
+            "mt4 has p[dir=ltr]:",
+            !!mt4.querySelector('p[dir="ltr"]')
+          );
+        }
 
         // Title - Direct job URLs have simpler structure
         let title =
@@ -442,29 +472,52 @@ class LinkedInAutomation {
         });
 
         // Job description from the "About the job" section
-        let description = "N/A";
+        let description = "";
+
+        // Try multiple approaches to get the description
         const descriptionContainer = document.querySelector(
-          ".jobs-description__content .jobs-box__html-content"
+          ".jobs-description__content"
         );
+
         if (descriptionContainer) {
-          // Get the content after the "About the job" heading
-          // The actual description is in .mt4 > p[dir="ltr"]
-          const contentDiv = descriptionContainer.querySelector(".mt4");
-          if (contentDiv) {
-            // Get the paragraph with dir="ltr" which contains all the description
-            const descParagraph = contentDiv.querySelector('p[dir="ltr"]');
+          // Approach 1: Look for .mt4 > p[dir="ltr"]
+          const mt4Div = descriptionContainer.querySelector(".mt4");
+          if (mt4Div) {
+            const descParagraph = mt4Div.querySelector('p[dir="ltr"]');
             if (descParagraph) {
               description = descParagraph.textContent.trim();
+              console.log(
+                "Got description from p[dir=ltr], length:",
+                description.length
+              );
             } else {
-              description = contentDiv.textContent.trim();
+              // Approach 2: Just get all text from mt4
+              description = mt4Div.textContent.trim();
+              console.log(
+                "Got description from mt4 textContent, length:",
+                description.length
+              );
             }
-          } else {
-            // Fallback: get all text content
-            description = descriptionContainer.textContent.trim();
-            // Remove "About the job" heading if present
-            description = description.replace(/^About the job\s*/i, "");
+          }
+
+          // Approach 3: If still empty, try getting from jobs-box__html-content
+          if (!description) {
+            const htmlContent = descriptionContainer.querySelector(
+              ".jobs-box__html-content"
+            );
+            if (htmlContent) {
+              description = htmlContent.textContent.trim();
+              // Remove "About the job" heading
+              description = description.replace(/^About the job\s*/i, "");
+              console.log(
+                "Got description from jobs-box__html-content, length:",
+                description.length
+              );
+            }
           }
         }
+
+        console.log("Final description length:", description.length);
 
         // Hiring team info
         let hiringManager = "N/A";
