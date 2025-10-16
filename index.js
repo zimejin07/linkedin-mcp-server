@@ -476,76 +476,110 @@ class LinkedInAutomation {
 
         console.log("=== Attempting to extract description ===");
 
-        // Strategy 1: Find #job-details and get its sibling .mt4
-        const jobDetailsSection = document.querySelector("#job-details");
+        // The most reliable approach: Find the article with class jobs-description__container
+        // and get ONLY the content area, not buttons/navigation
+        const article = document.querySelector(
+          "article.jobs-description__container"
+        );
 
-        if (jobDetailsSection) {
-          console.log("✓ Found #job-details section");
+        if (article) {
+          console.log("✓ Found article.jobs-description__container");
 
-          // The mt4 is a sibling of job-details in the same parent
-          const parent = jobDetailsSection.parentElement;
-          if (parent) {
-            const mt4Div = parent.querySelector(".mt4");
-            if (mt4Div) {
-              console.log("✓ Found .mt4 via #job-details parent");
-              description = mt4Div.textContent.trim();
-              console.log("Description length:", description.length);
-            }
-          }
-        }
-
-        // Strategy 2: Direct query for .mt4 within jobs-description
-        if (!description) {
-          console.log("Trying direct .mt4 search...");
-          const allMt4 = document.querySelectorAll(".mt4");
-          console.log("Found", allMt4.length, ".mt4 elements");
-
-          // Find the one with substantial content (job description)
-          allMt4.forEach((el, idx) => {
-            const text = el.textContent.trim();
-            console.log(`  .mt4[${idx}] has ${text.length} chars`);
-            if (text.length > 100 && !description) {
-              description = text;
-              console.log("✓ Using .mt4[" + idx + "] as description");
-            }
-          });
-        }
-
-        // Strategy 3: Look for article.jobs-description__container
-        if (!description) {
-          console.log("Trying article.jobs-description__container...");
-          const articleEl = document.querySelector(
-            "article.jobs-description__container"
+          // Look for the actual content div within the article
+          // This should have class jobs-description__content
+          const contentDiv = article.querySelector(
+            ".jobs-description__content, .jobs-description-content"
           );
-          if (articleEl) {
-            console.log("✓ Found article element");
-            description = articleEl.textContent.trim();
-            description = description.replace(/^About the job\s*/i, "").trim();
-            description = description.replace(/See less\s*$/i, "").trim();
-            console.log("Description length from article:", description.length);
+
+          if (contentDiv) {
+            console.log("✓ Found content div");
+
+            // Now find the .mt4 div which has the actual description text
+            const mt4 = contentDiv.querySelector(".mt4");
+
+            if (mt4) {
+              console.log("✓ Found .mt4 with description");
+              description = mt4.textContent.trim();
+              console.log("Description length from .mt4:", description.length);
+            } else {
+              // Fallback: get text from content div but exclude buttons/navigation
+              // Get the div with id="job-details" parent
+              const jobDetailsDiv = contentDiv.querySelector("#job-details");
+              if (jobDetailsDiv && jobDetailsDiv.parentElement) {
+                const parent = jobDetailsDiv.parentElement;
+                const mt4Fallback = parent.querySelector(".mt4");
+                if (mt4Fallback) {
+                  description = mt4Fallback.textContent.trim();
+                  console.log(
+                    "Description length from fallback:",
+                    description.length
+                  );
+                }
+              }
+            }
           }
         }
 
-        // Strategy 4: Brute force - find any p[dir="ltr"] with lots of text
+        // Alternative: Look specifically for the div with id="job-details"
+        // and its sibling .mt4 div
         if (!description) {
-          console.log("Trying brute force p[dir='ltr'] search...");
-          const allParas = document.querySelectorAll('p[dir="ltr"]');
-          console.log("Found", allParas.length, "p[dir='ltr'] elements");
+          console.log("Trying #job-details approach...");
+          const jobDetails = document.querySelector("#job-details");
 
-          allParas.forEach((p, idx) => {
-            const text = p.textContent.trim();
-            console.log(`  p[${idx}] has ${text.length} chars`);
-            // Job descriptions are typically > 500 chars
-            if (text.length > 500 && !description) {
-              description = text;
-              console.log("✓ Using p[" + idx + "] as description");
+          if (jobDetails) {
+            console.log("✓ Found #job-details");
+
+            // The .mt4 is a sibling of #job-details in the parent container
+            const container = jobDetails.closest(".jobs-box__html-content");
+
+            if (container) {
+              console.log("✓ Found .jobs-box__html-content container");
+              const mt4 = container.querySelector(".mt4");
+
+              if (mt4) {
+                console.log("✓ Found .mt4 in container");
+                description = mt4.textContent.trim();
+                console.log("Description length:", description.length);
+              }
+            }
+          }
+        }
+
+        // Last resort: Find the .mt4 that's specifically inside jobs-description
+        if (!description) {
+          console.log("Trying .jobs-description .mt4 search...");
+          const mt4Elements = document.querySelectorAll(
+            ".jobs-description .mt4, .jobs-box__html-content .mt4"
+          );
+
+          console.log("Found", mt4Elements.length, "potential .mt4 elements");
+
+          // Find the one with the most content (that's likely the job description)
+          let longestText = "";
+          mt4Elements.forEach((el, idx) => {
+            const text = el.textContent.trim();
+            console.log(`  .mt4[${idx}] length: ${text.length}`);
+
+            if (text.length > longestText.length) {
+              longestText = text;
             }
           });
+
+          if (longestText.length > 200) {
+            description = longestText;
+            console.log(
+              "✓ Using longest .mt4 content:",
+              description.length,
+              "chars"
+            );
+          }
         }
 
         console.log("=== Final description length:", description.length, "===");
         if (description.length > 0) {
-          console.log("Preview:", description.substring(0, 150) + "...");
+          console.log("First 200 chars:", description.substring(0, 200));
+        } else {
+          console.log("❌ No description found!");
         }
 
         // Hiring team info
