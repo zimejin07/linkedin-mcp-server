@@ -368,35 +368,189 @@ class LinkedInAutomation {
     try {
       console.error("Fetching job details from:", jobUrl);
 
+      // Extract job ID from URL
+      const jobIdMatch = jobUrl.match(/\/jobs\/view\/(\d+)/);
+
+      if (!jobIdMatch) {
+        return {
+          success: false,
+          message: "Could not extract job ID from URL",
+        };
+      }
+
+      const jobId = jobIdMatch[1];
+      console.error("Extracted job ID:", jobId);
+
+      // Enable request interception to capture API responses
+      await this.page.setRequestInterception(true);
+
+      let apiResponse = null;
+
+      // Intercept requests
+      const requestHandler = (request) => {
+        const url = request.url();
+
+        // Check if this is the job posting API request
+        if (
+          url.includes("/voyager/api/jobs/jobPostings/") &&
+          url.includes(jobId)
+        ) {
+          console.error("Detected API request:", url);
+        }
+
+        request.continue();
+      };
+
+      // Intercept responses
+      const responseHandler = async (response) => {
+        const url = response.url();
+
+        // Capture the job posting API response
+        if (
+          url.includes("/voyager/api/jobs/jobPostings/") &&
+          url.includes(jobId)
+        ) {
+          console.error("Captured API response!");
+          try {
+            apiResponse = await response.json();
+            console.error("API response captured successfully");
+          } catch (e) {
+            console.error("Failed to parse API response:", e.message);
+          }
+        }
+      };
+
+      this.page.on("request", requestHandler);
+      this.page.on("response", responseHandler);
+
+      // Navigate to the job page - this will trigger the API call
+      console.error("Navigating to job page...");
       await this.page.goto(jobUrl, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "networkidle2",
         timeout: 30000,
       });
 
-      await this.randomDelay(2000, 3000);
+      await this.randomDelay(3000, 4000);
 
-      // Wait for job view layout (this is present in direct job URLs)
-      await Promise.race([
-        this.page.waitForSelector(".job-view-layout", { timeout: 10000 }),
-        this.page.waitForSelector(".jobs-details", { timeout: 10000 }),
-        this.page.waitForSelector(
-          ".job-details-jobs-unified-top-card__job-title",
-          { timeout: 10000 }
-        ),
-      ]).catch(() => {
-        console.error("Waiting for selectors, continuing anyway...");
-      });
+      // Clean up listeners
+      this.page.off("request", requestHandler);
+      this.page.off("response", responseHandler);
+      await this.page.setRequestInterception(false);
 
-      // Wait specifically for job description to load
+      // If we captured the API response, use it
+      if (apiResponse && apiResponse.data) {
+        console.error("Processing intercepted API response...");
+
+        const jobData = apiResponse.data;
+        const title = jobData.title || "N/A";
+        const location = jobData.formattedLocation || "N/A";
+        const description = jobData.description?.text || "";
+
+        console.error("Description length from API:", description.length);
+
+        // Extract company info
+        let company = "N/A";
+        let companySize = "N/A";
+        let companyFollowers = "N/A";
+        let companyIndustry = "N/A";
+        let companyDescription = "N/A";
+
+        if (apiResponse.included && Array.isArray(apiResponse.included)) {
+          const companyData = apiResponse.included.find(
+            (item) => item.$type === "com.linkedin.voyager.organization.Company"
+          );
+
+          if (companyData) {
+            company = companyData.name || company;
+            companyDescription = companyData.description || companyDescription;
+
+            if (companyData.staffCountRange) {
+              const range = companyData.staffCountRange;
+              companySize = `${range.start}-${range.end} employees`;
+            }
+
+            if (companyData.industries && companyData.industries.length > 0) {
+              companyIndustry = companyData.industries.join(", ");
+            }
+          }
+
+          const followInfo = apiResponse.included.find(
+            (item) => item.$type === "com.linkedin.voyager.common.FollowingInfo"
+          );
+
+          if (followInfo && followInfo.followerCount) {
+            companyFollowers =
+              followInfo.followerCount.toLocaleString() + " followers";
+          }
+        }
+
+        const workplaceTypes = [];
+        if (jobData.workRemoteAllowed) {
+          workplaceTypes.push("Remote");
+        }
+        if (jobData.formattedEmploymentStatus) {
+          workplaceTypes.push(jobData.formattedEmploymentStatus);
+        }
+
+        const metadata = [
+          location,
+          jobData.formattedExperienceLevel,
+          `${jobData.applies || 0} applicants`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+        return {
+          success: true,
+          details: {
+            title,
+            company,
+            location,
+            metadata,
+            workplaceType: workplaceTypes.join(", ") || "N/A",
+            description:
+              description.substring(0, 5000) +
+              (description.length > 5000 ? "..." : ""),
+            experienceLevel: jobData.formattedExperienceLevel || "N/A",
+            applicants: jobData.applies || 0,
+            postedAt: jobData.listedAt
+              ? new Date(jobData.listedAt).toISOString()
+              : "N/A",
+            companyInfo: {
+              size: companySize,
+              followers: companyFollowers,
+              industry: companyIndustry,
+              description:
+                companyDescription.substring(0, 1000) +
+                (companyDescription.length > 1000 ? "..." : ""),
+            },
+          },
+        };
+      }
+
+      // If API interception didn't work, fall back to DOM
+      console.error(
+        "API interception failed, falling back to DOM extraction..."
+      );
+      return await this.getJobDetailsFromDOM();
+    } catch (error) {
+      console.error("Error in getJobDetails:", error);
+      return {
+        success: false,
+        message: `Error getting job details: ${error.message}`,
+      };
+    }
+  }
+
+  async getJobDetailsFromDOM() {
+    // Fallback method using DOM scraping
+    try {
+      console.error("Extracting from DOM as fallback...");
+
+      // Wait for description to load
       await this.page
-        .waitForSelector(".jobs-description__content", {
-          timeout: 10000,
-        })
-        .catch(() => {
-          console.error("Job description container not found, continuing...");
-        });
-
-      await this.randomDelay(2000, 3000);
+        .waitForSelector(".jobs-description", { timeout: 5000 })
+        .catch(() => {});
 
       const details = await this.page.evaluate(() => {
         const getTextContent = (selector) => {
@@ -404,44 +558,20 @@ class LinkedInAutomation {
           return el ? el.textContent.trim() : null;
         };
 
-        // Debug: Log what we're finding
-        console.log("=== DEBUG INFO ===");
-        console.log(
-          "Description container exists:",
-          !!document.querySelector(".jobs-description__content")
-        );
-        console.log(
-          "jobs-box__html-content exists:",
-          !!document.querySelector(".jobs-box__html-content")
-        );
-        console.log("mt4 div exists:", !!document.querySelector(".mt4"));
-
-        const mt4 = document.querySelector(".jobs-description__content .mt4");
-        if (mt4) {
-          console.log("mt4 innerHTML length:", mt4.innerHTML.length);
-          console.log(
-            "mt4 has p[dir=ltr]:",
-            !!mt4.querySelector('p[dir="ltr"]')
-          );
-        }
-
-        // Title - Direct job URLs have simpler structure
-        let title =
+        const title =
           getTextContent(".job-details-jobs-unified-top-card__job-title h1") ||
           getTextContent(
             ".job-details-jobs-unified-top-card__sticky-header-job-title strong"
           ) ||
           "N/A";
 
-        // Company
-        let company =
+        const company =
           getTextContent(
             ".job-details-jobs-unified-top-card__company-name a"
           ) ||
           getTextContent(".job-details-jobs-unified-top-card__company-name") ||
           "N/A";
 
-        // Location and metadata
         const metadataEl = document.querySelector(
           ".job-details-jobs-unified-top-card__tertiary-description-container"
         );
@@ -450,187 +580,83 @@ class LinkedInAutomation {
 
         if (metadataEl) {
           metadata = metadataEl.textContent.trim();
-          // Extract location (first part before "·")
           const locationMatch = metadata.match(/^([^·]+)/);
           location = locationMatch
             ? locationMatch[1].trim()
             : metadata.split("·")[0].trim();
         }
 
-        // Workplace preferences (Remote, Full-time, etc.)
         const preferences = [];
         const preferenceButtons = document.querySelectorAll(
           ".job-details-fit-level-preferences button"
         );
         preferenceButtons.forEach((btn) => {
           const text = btn.textContent.trim().replace(/\s+/g, " ");
-          // Extract just the preference type (Remote, Full-time, etc.)
           const match = text.match(
             /(Remote|Full-time|Part-time|Contract|Hybrid|On-site)/i
           );
           if (match) preferences.push(match[1]);
         });
 
-        // Job description from the "About the job" section
+        // More aggressive description extraction
         let description = "";
 
-        console.log("=== Attempting to extract description ===");
+        console.log("=== DOM Description Extraction ===");
 
-        // The most reliable approach: Find the article with class jobs-description__container
-        // and get ONLY the content area, not buttons/navigation
-        const article = document.querySelector(
-          "article.jobs-description__container"
-        );
+        // Try 1: Find by id="job-details" and get next sibling
+        const jobDetailsHeading = document.querySelector("#job-details");
+        if (jobDetailsHeading) {
+          console.log("Found #job-details heading");
+          let nextEl = jobDetailsHeading.nextElementSibling;
+          if (nextEl && nextEl.classList.contains("mt4")) {
+            console.log("Found mt4 sibling");
+            description = nextEl.textContent.trim();
+          }
+        }
 
-        if (article) {
-          console.log("✓ Found article.jobs-description__container");
+        // Try 2: All .mt4 elements in jobs-description
+        if (!description || description.length < 100) {
+          console.log("Trying all .mt4 in .jobs-description");
+          const jobsDesc = document.querySelector(".jobs-description");
+          if (jobsDesc) {
+            const mt4s = jobsDesc.querySelectorAll(".mt4");
+            console.log("Found", mt4s.length, ".mt4 elements");
 
-          // Look for the actual content div within the article
-          // This should have class jobs-description__content
-          const contentDiv = article.querySelector(
-            ".jobs-description__content, .jobs-description-content"
-          );
-
-          if (contentDiv) {
-            console.log("✓ Found content div");
-
-            // Now find the .mt4 div which has the actual description text
-            const mt4 = contentDiv.querySelector(".mt4");
-
-            if (mt4) {
-              console.log("✓ Found .mt4 with description");
-              description = mt4.textContent.trim();
-              console.log("Description length from .mt4:", description.length);
-            } else {
-              // Fallback: get text from content div but exclude buttons/navigation
-              // Get the div with id="job-details" parent
-              const jobDetailsDiv = contentDiv.querySelector("#job-details");
-              if (jobDetailsDiv && jobDetailsDiv.parentElement) {
-                const parent = jobDetailsDiv.parentElement;
-                const mt4Fallback = parent.querySelector(".mt4");
-                if (mt4Fallback) {
-                  description = mt4Fallback.textContent.trim();
-                  console.log(
-                    "Description length from fallback:",
-                    description.length
-                  );
-                }
+            mt4s.forEach((el, i) => {
+              const text = el.textContent.trim();
+              console.log(`mt4[${i}] length:`, text.length);
+              if (text.length > description.length && text.length > 100) {
+                description = text;
               }
-            }
+            });
           }
         }
 
-        // Alternative: Look specifically for the div with id="job-details"
-        // and its sibling .mt4 div
-        if (!description) {
-          console.log("Trying #job-details approach...");
-          const jobDetails = document.querySelector("#job-details");
-
-          if (jobDetails) {
-            console.log("✓ Found #job-details");
-
-            // The .mt4 is a sibling of #job-details in the parent container
-            const container = jobDetails.closest(".jobs-box__html-content");
-
-            if (container) {
-              console.log("✓ Found .jobs-box__html-content container");
-              const mt4 = container.querySelector(".mt4");
-
-              if (mt4) {
-                console.log("✓ Found .mt4 in container");
-                description = mt4.textContent.trim();
-                console.log("Description length:", description.length);
+        // Try 3: Get from article > div with lots of text
+        if (!description || description.length < 100) {
+          console.log("Trying article approach");
+          const article = document.querySelector(
+            "article.jobs-description__container"
+          );
+          if (article) {
+            const allDivs = article.querySelectorAll("div");
+            allDivs.forEach((div) => {
+              const text = div.textContent.trim();
+              // Must be > 500 chars and not contain UI text
+              if (
+                text.length > 500 &&
+                !text.includes("Easy Apply") &&
+                !text.includes("Show more options") &&
+                text.length > description.length
+              ) {
+                description = text;
               }
-            }
+            });
           }
         }
 
-        // Last resort: Find the .mt4 that's specifically inside jobs-description
-        if (!description) {
-          console.log("Trying .jobs-description .mt4 search...");
-          const mt4Elements = document.querySelectorAll(
-            ".jobs-description .mt4, .jobs-box__html-content .mt4"
-          );
-
-          console.log("Found", mt4Elements.length, "potential .mt4 elements");
-
-          // Find the one with the most content (that's likely the job description)
-          let longestText = "";
-          mt4Elements.forEach((el, idx) => {
-            const text = el.textContent.trim();
-            console.log(`  .mt4[${idx}] length: ${text.length}`);
-
-            if (text.length > longestText.length) {
-              longestText = text;
-            }
-          });
-
-          if (longestText.length > 200) {
-            description = longestText;
-            console.log(
-              "✓ Using longest .mt4 content:",
-              description.length,
-              "chars"
-            );
-          }
-        }
-
-        console.log("=== Final description length:", description.length, "===");
-        if (description.length > 0) {
-          console.log("First 200 chars:", description.substring(0, 200));
-        } else {
-          console.log("❌ No description found!");
-        }
-
-        // Hiring team info
-        let hiringManager = "N/A";
-        const hiringManagerName = document.querySelector(".jobs-poster__name");
-        const hiringManagerTitle = document.querySelector(
-          ".linked-area .text-body-small"
-        );
-        if (hiringManagerName) {
-          hiringManager = hiringManagerName.textContent.trim();
-          if (hiringManagerTitle) {
-            hiringManager += " - " + hiringManagerTitle.textContent.trim();
-          }
-        }
-
-        // Company info from "About the company" section
-        const companyFollowersEl = document.querySelector(
-          ".jobs-company .artdeco-entity-lockup__subtitle"
-        );
-        const companyFollowers = companyFollowersEl
-          ? companyFollowersEl.textContent.trim()
-          : "N/A";
-
-        const companyIndustryEl = document.querySelector(
-          ".jobs-company .t-14.mt5"
-        );
-        const companyIndustry = companyIndustryEl
-          ? companyIndustryEl.textContent.trim()
-          : "N/A";
-
-        // Extract company size from industry line (format: "Industry · 51-200 employees · X on LinkedIn")
-        let companySize = "N/A";
-        if (companyIndustry !== "N/A") {
-          const sizeMatch = companyIndustry.match(/(\d+-?\d*\s+employees)/i);
-          if (sizeMatch) {
-            companySize = sizeMatch[1];
-          }
-        }
-
-        let companyDescription = "N/A";
-        const companyDescEl = document.querySelector(
-          ".jobs-company__company-description .inline-show-more-text"
-        );
-        if (companyDescEl) {
-          companyDescription = companyDescEl.textContent.trim();
-          // Remove "show more" button text if present
-          companyDescription = companyDescription.replace(
-            /…\s*show more\s*$/i,
-            ""
-          );
-        }
+        console.log("Final description length:", description.length);
+        console.log("First 100 chars:", description.substring(0, 100));
 
         return {
           title,
@@ -639,27 +665,26 @@ class LinkedInAutomation {
           metadata,
           workplaceType: preferences.join(", ") || "N/A",
           description:
-            description.substring(0, 3000) +
-            (description.length > 3000 ? "..." : ""),
-          hiringManager,
+            description.substring(0, 5000) +
+            (description.length > 5000 ? "..." : ""),
           companyInfo: {
-            size: companySize,
-            followers: companyFollowers,
-            industry: companyIndustry || "N/A",
-            description:
-              companyDescription.substring(0, 800) +
-              (companyDescription.length > 800 ? "..." : ""),
+            size: "N/A",
+            followers: "N/A",
+            industry: "N/A",
+            description: "N/A",
           },
         };
       });
 
-      console.error("Successfully extracted job details");
+      console.error(
+        "DOM extraction completed, description length:",
+        details.description.length
+      );
       return { success: true, details };
     } catch (error) {
-      console.error("Error in getJobDetails:", error);
       return {
         success: false,
-        message: `Error getting job details: ${error.message}`,
+        message: `DOM extraction failed: ${error.message}`,
       };
     }
   }
